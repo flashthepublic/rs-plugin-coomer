@@ -90,6 +90,8 @@ pub enum CoomerLookupId {
 /// Parse a coomer identifier from various formats:
 /// - "coomer:onlyfans/creator_id/post_id" -> Post
 /// - "coomer:onlyfans/creator_id" -> Creator
+/// - "coomer:onlyfans|creator_id|post_id" -> Post (stored ID format)
+/// - "coomer-creator:onlyfans|creator_id" -> Creator (stored person ID format)
 /// - "https://coomer.st/onlyfans/user/creator_id/post/post_id" -> Post
 /// - "https://coomer.st/onlyfans/user/creator_id" -> Creator
 /// - Accepts both coomer.st and coomer.su domains
@@ -99,7 +101,12 @@ pub fn parse_coomer_id(value: &str) -> Option<CoomerLookupId> {
         return None;
     }
 
-    // Try "coomer:" prefix format
+    // Try "coomer-creator:" prefix (stored person ID format, e.g. "coomer-creator:onlyfans|belledelphine")
+    if let Some(rest) = strip_prefix_case_insensitive(trimmed, "coomer-creator:") {
+        return parse_coomer_path(rest);
+    }
+
+    // Try "coomer:" prefix format (covers both "coomer:service/creator" and stored "coomer:service|creator|post")
     if let Some(rest) = strip_prefix_case_insensitive(trimmed, "coomer:") {
         return parse_coomer_path(rest);
     }
@@ -119,11 +126,14 @@ fn strip_prefix_case_insensitive<'a>(value: &'a str, prefix: &str) -> Option<&'a
 }
 
 fn parse_coomer_path(path: &str) -> Option<CoomerLookupId> {
-    let parts: Vec<&str> = path
-        .trim_matches('/')
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let trimmed = path.trim_matches('/').trim_matches('|');
+
+    // Split on '|' first (stored ID format), then try '/'
+    let parts: Vec<&str> = if trimmed.contains('|') {
+        trimmed.split('|').filter(|s| !s.is_empty()).collect()
+    } else {
+        trimmed.split('/').filter(|s| !s.is_empty()).collect()
+    };
 
     match parts.len() {
         2 => Some(CoomerLookupId::Creator {
@@ -472,6 +482,40 @@ mod tests {
             parse_coomer_id("https://coomer.st/onlyfans/user/creator1/"),
             Some(CoomerLookupId::Creator {
                 service: "onlyfans".to_string(),
+                creator_id: "creator1".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_coomer_id_stored_creator_pipe_format() {
+        assert_eq!(
+            parse_coomer_id("coomer-creator:onlyfans|belledelphine"),
+            Some(CoomerLookupId::Creator {
+                service: "onlyfans".to_string(),
+                creator_id: "belledelphine".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_coomer_id_stored_media_pipe_format() {
+        assert_eq!(
+            parse_coomer_id("coomer:onlyfans|belledelphine|12345"),
+            Some(CoomerLookupId::Post {
+                service: "onlyfans".to_string(),
+                creator_id: "belledelphine".to_string(),
+                post_id: "12345".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_coomer_id_stored_creator_pipe_only_service_creator() {
+        assert_eq!(
+            parse_coomer_id("coomer:fansly|creator1"),
+            Some(CoomerLookupId::Creator {
+                service: "fansly".to_string(),
                 creator_id: "creator1".to_string(),
             })
         );

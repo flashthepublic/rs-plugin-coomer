@@ -44,7 +44,7 @@ pub fn infos() -> FnResult<Json<PluginInformation>> {
     Ok(Json(PluginInformation {
         name: "coomer_metadata".into(),
         capabilities: vec![PluginType::LookupMetadata, PluginType::Lookup],
-        version: 4,
+        version: 5,
         interface_version: 1,
         repo: Some("https://github.com/flashthepublic/rs-plugin-coomer".to_string()),
         publisher: "neckaros".into(),
@@ -826,6 +826,49 @@ mod tests {
                 service,
                 creator_id,
             }) if service == "onlyfans" && creator_id == "user1"
+        ));
+    }
+
+    #[test]
+    fn resolve_target_from_redseat_stored_creator_id() {
+        let person = RsLookupPerson {
+            name: Some("Belle Delphine".to_string()),
+            ids: Some(RsIds {
+                redseat: Some("coomer-creator:onlyfans|belledelphine".to_string()),
+                ..Default::default()
+            }),
+            page_key: None,
+        };
+
+        let target = resolve_person_lookup_target(&person);
+        assert!(matches!(
+            target,
+            Some(LookupTarget::CreatorListing {
+                service,
+                creator_id,
+            }) if service == "onlyfans" && creator_id == "belledelphine"
+        ));
+    }
+
+    #[test]
+    fn resolve_media_target_from_redseat_stored_media_id() {
+        let media = RsLookupMedia {
+            search: Some("Belle Delphine post".to_string()),
+            ids: Some(RsIds {
+                redseat: Some("coomer:onlyfans|belledelphine|12345".to_string()),
+                ..Default::default()
+            }),
+            page_key: None,
+        };
+
+        let target = resolve_media_lookup_target(&media);
+        assert!(matches!(
+            target,
+            Some(LookupTarget::DirectPost {
+                service,
+                creator_id,
+                post_id,
+            }) if service == "onlyfans" && creator_id == "belledelphine" && post_id == "12345"
         ));
     }
 
