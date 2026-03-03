@@ -44,7 +44,7 @@ pub fn infos() -> FnResult<Json<PluginInformation>> {
     Ok(Json(PluginInformation {
         name: "coomer_metadata".into(),
         capabilities: vec![PluginType::LookupMetadata, PluginType::Lookup],
-        version: 3,
+        version: 4,
         interface_version: 1,
         repo: Some("https://github.com/flashthepublic/rs-plugin-coomer".to_string()),
         publisher: "neckaros".into(),
@@ -603,7 +603,7 @@ fn post_to_group_download(
 
 fn post_to_infos(post: &CoomerPost) -> Option<MediaForUpdate> {
     let add_people = vec![MediaItemReference {
-        id: format!("coomer-creator:{}/{}", post.service, post.creator_id),
+        id: format!("coomer-creator:{}|{}", post.service, post.creator_id),
         conf: None,
     }];
     let people_lookup = vec![post.creator_name.clone()];
@@ -938,7 +938,7 @@ mod tests {
         let infos = download.infos.expect("expected infos");
         assert_eq!(
             infos.add_people.expect("expected add_people")[0].id,
-            "coomer-creator:onlyfans/c"
+            "coomer-creator:onlyfans|c"
         );
         assert_eq!(
             infos.people_lookup.expect("expected people_lookup")[0],

@@ -29,7 +29,7 @@ pub fn coomer_profile_to_person_result(
     let web_url = build_creator_web_url(service, creator_id);
 
     let person = Person {
-        id: format!("coomer-creator:{service}/{creator_id}"),
+        id: format!("coomer-creator:{service}|{creator_id}"),
         name,
         portrait: Some(icon_url.clone()),
         params: Some(json!({
@@ -67,7 +67,7 @@ pub fn coomer_post_to_result(post: CoomerPost) -> RsLookupMetadataResultWrapper 
     let id = post
         .id
         .as_ref()
-        .map(|pid| format!("coomer:{pid}"))
+        .map(|pid| format!("coomer:{}", pid.replace('/', "|")))
         .unwrap_or_else(|| fallback_local_id(&post.title));
 
     let params = json!({
@@ -90,7 +90,7 @@ pub fn coomer_post_to_result(post: CoomerPost) -> RsLookupMetadataResultWrapper 
     let file_count = post.file_urls.len();
 
     let people_details = vec![Person {
-        id: format!("coomer-creator:{}/{}", post.service, post.creator_id),
+        id: format!("coomer-creator:{}|{}", post.service, post.creator_id),
         name: post.creator_name.clone(),
         generated: true,
         ..Default::default()
@@ -214,9 +214,9 @@ fn fallback_local_id(title: &str) -> String {
 
     let slug = slug.trim_matches('-');
     if slug.is_empty() {
-        "coomer-post".to_string()
+        "coomer-post:unknown".to_string()
     } else {
-        format!("coomer-post-{slug}")
+        format!("coomer-post:{slug}")
     }
 }
 
@@ -246,7 +246,7 @@ mod tests {
 
         let result = coomer_post_to_result(post);
         if let RsLookupMetadataResult::Media(media) = &result.metadata {
-            assert_eq!(media.id, "coomer:onlyfans/creator1/12345");
+            assert_eq!(media.id, "coomer:onlyfans|creator1|12345");
             assert_eq!(media.name, "Test Post");
             assert_eq!(media.description, Some("Post content".to_string()));
             assert_eq!(media.kind, FileType::Photo);
@@ -258,7 +258,7 @@ mod tests {
 
         let relations = result.relations.expect("expected relations");
         let people = relations.people_details.expect("expected people_details");
-        assert_eq!(people[0].id, "coomer-creator:onlyfans/creator1");
+        assert_eq!(people[0].id, "coomer-creator:onlyfans|creator1");
         assert_eq!(people[0].name, "Creator One");
 
         let tags = relations.tags_details.expect("expected tags_details");
@@ -348,9 +348,9 @@ mod tests {
 
     #[test]
     fn fallback_local_id_slugifies() {
-        assert_eq!(fallback_local_id("My Test Post"), "coomer-post-my-test-post");
-        assert_eq!(fallback_local_id(""), "coomer-post");
-        assert_eq!(fallback_local_id("  "), "coomer-post");
+        assert_eq!(fallback_local_id("My Test Post"), "coomer-post:my-test-post");
+        assert_eq!(fallback_local_id(""), "coomer-post:unknown");
+        assert_eq!(fallback_local_id("  "), "coomer-post:unknown");
     }
 
     #[test]
@@ -363,7 +363,7 @@ mod tests {
 
         let result = coomer_post_to_result(post);
         if let RsLookupMetadataResult::Media(media) = &result.metadata {
-            assert_eq!(media.id, "coomer-post-untitled-post");
+            assert_eq!(media.id, "coomer-post:untitled-post");
         } else {
             panic!("Expected Media metadata");
         }
