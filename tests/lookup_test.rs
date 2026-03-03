@@ -302,3 +302,110 @@ fn test_lookup_media_page_2_returns_different_results() {
         page1_first_id, page2_first_id, page2.next_page_key
     );
 }
+
+// ---- Plain name search tests ----
+
+#[test]
+fn test_lookup_person_plain_name_search() {
+    let mut plugin = build_plugin();
+
+    let input = RsLookupWrapper {
+        query: RsLookupQuery::Person(RsLookupPerson {
+            name: Some("belledelphine".to_string()),
+            ids: None,
+            page_key: None,
+        }),
+        credential: None,
+        params: None,
+    };
+
+    let results = call_lookup(&mut plugin, &input);
+    assert!(
+        !results.results.is_empty(),
+        "Expected at least one person result for plain name 'belledelphine'"
+    );
+
+    let first = &results.results[0];
+    let person = match &first.metadata {
+        RsLookupMetadataResult::Person(person) => person,
+        other => panic!("Expected Person metadata for plain name search, got {:?}", other),
+    };
+    println!(
+        "Plain name person search returned {} results, first: {} (id: {})",
+        results.results.len(),
+        person.name,
+        person.id
+    );
+}
+
+#[test]
+fn test_lookup_person_discovers_creators_from_posts() {
+    let mut plugin = build_plugin();
+
+    // "flashingemma" has a direct profile match on onlyfans
+    let input = RsLookupWrapper {
+        query: RsLookupQuery::Person(RsLookupPerson {
+            name: Some("flashingemma".to_string()),
+            ids: None,
+            page_key: None,
+        }),
+        credential: None,
+        params: None,
+    };
+
+    let results = call_lookup(&mut plugin, &input);
+    assert!(
+        !results.results.is_empty(),
+        "Expected at least one person result for 'flashingemma'"
+    );
+
+    // Should find the onlyfans creator
+    let has_onlyfans = results.results.iter().any(|r| {
+        matches!(&r.metadata, RsLookupMetadataResult::Person(p) if p.id.contains("onlyfans"))
+    });
+    assert!(has_onlyfans, "Expected to find flashingemma on onlyfans");
+
+    for r in &results.results {
+        if let RsLookupMetadataResult::Person(person) = &r.metadata {
+            println!(
+                "Discovered creator: {} (id: {})",
+                person.name, person.id
+            );
+        }
+    }
+    println!(
+        "Person search returned {} creators",
+        results.results.len()
+    );
+}
+
+#[test]
+fn test_lookup_media_plain_text_search() {
+    let mut plugin = build_plugin();
+
+    let input = RsLookupWrapper {
+        query: RsLookupQuery::Media(RsLookupMedia {
+            search: Some("belledelphine".to_string()),
+            ids: None,
+            page_key: None,
+        }),
+        credential: None,
+        params: None,
+    };
+
+    let results = call_lookup(&mut plugin, &input);
+    assert!(
+        !results.results.is_empty(),
+        "Expected at least one media result for plain text 'belledelphine'"
+    );
+
+    let first = &results.results[0];
+    assert!(
+        matches!(&first.metadata, RsLookupMetadataResult::Media(_)),
+        "Expected Media metadata for text search"
+    );
+    println!(
+        "Plain text media search returned {} results",
+        results.results.len()
+    );
+}

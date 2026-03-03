@@ -20,11 +20,12 @@ mod coomer;
 use convert::{coomer_post_to_images, coomer_post_to_result, coomer_profile_to_person_result};
 use coomer::{
     api_post_to_coomer_post, build_creator_posts_url, build_post_url, build_profile_url,
-    parse_coomer_id, parse_post_json, parse_posts_json, parse_profile_json, CoomerLookupId,
-    CoomerPost,
+    build_search_posts_url, parse_coomer_id, parse_post_json, parse_posts_json,
+    parse_profile_json, parse_search_json, CoomerLookupId, CoomerPost,
 };
 
 const POSTS_PER_PAGE: u32 = 50;
+const SERVICES: &[&str] = &["onlyfans", "fansly", "candfans"];
 
 enum LookupTarget {
     DirectPost {
@@ -43,7 +44,7 @@ pub fn infos() -> FnResult<Json<PluginInformation>> {
     Ok(Json(PluginInformation {
         name: "coomer_metadata".into(),
         capabilities: vec![PluginType::LookupMetadata, PluginType::Lookup],
-        version: 2,
+        version: 3,
         interface_version: 1,
         repo: Some("https://github.com/flashthepublic/rs-plugin-coomer".to_string()),
         publisher: "neckaros".into(),
@@ -233,6 +234,89 @@ fn execute_creator_listing_request(
     Ok((posts, next_page_key))
 }
 
+/// Search for a creator by trying the profile endpoint on each known service.
+/// If no direct profile match, search posts and discover creators from results.
+/// Returns all matching (service, profile) pairs.
+fn search_person_by_name(
+    name: &str,
+) -> Vec<(String, coomer::CoomerApiProfile)> {
+    // 1. Try direct profile lookup on each service
+    let mut results = Vec::new();
+    for &service in SERVICES {
+        let url = build_profile_url(service, name);
+        if let Ok(body) = execute_json_request(url) {
+            if let Some(profile) = parse_profile_json(&body) {
+                results.push((service.to_string(), profile));
+            }
+        }
+    }
+    if !results.is_empty() {
+        return results;
+    }
+
+    // 2. Fallback: search posts, extract unique creators, fetch their profiles
+    let url = build_search_posts_url(name, None);
+    let api_posts = match execute_json_request(url) {
+        Ok(body) => parse_search_json(&body)
+            .and_then(|r| r.posts)
+            .unwrap_or_default(),
+        Err(_) => return results,
+    };
+
+    let mut seen = HashSet::new();
+    for post in &api_posts {
+        let service = post.service.as_deref().unwrap_or_default();
+        let creator_id = post.user.as_deref().unwrap_or_default();
+        if service.is_empty() || creator_id.is_empty() {
+            continue;
+        }
+        if seen.insert((service.to_string(), creator_id.to_string())) {
+            let url = build_profile_url(service, creator_id);
+            if let Ok(body) = execute_json_request(url) {
+                if let Some(profile) = parse_profile_json(&body) {
+                    results.push((service.to_string(), profile));
+                }
+            }
+        }
+        // Limit to avoid too many profile requests
+        if results.len() >= 10 {
+            break;
+        }
+    }
+
+    results
+}
+
+/// Search posts globally using /api/v1/posts?q={query}&o={offset}.
+fn execute_search_posts_request(
+    query: &str,
+    offset: Option<u32>,
+) -> FnResult<(Vec<CoomerPost>, Option<String>)> {
+    let url = build_search_posts_url(query, offset);
+    let body = execute_json_request(url)?;
+    let search_response = parse_search_json(&body);
+    match search_response {
+        Some(resp) => {
+            let api_posts = resp.posts.unwrap_or_default();
+            let current_offset = offset.unwrap_or(0);
+            let next_page_key = if api_posts.len() >= POSTS_PER_PAGE as usize {
+                Some((current_offset + POSTS_PER_PAGE).to_string())
+            } else {
+                None
+            };
+            let posts = api_posts
+                .into_iter()
+                .map(|p| {
+                    let creator_name = p.user.clone().unwrap_or_default();
+                    api_post_to_coomer_post(p, &creator_name)
+                })
+                .collect();
+            Ok((posts, next_page_key))
+        }
+        None => Ok((vec![], None)),
+    }
+}
+
 fn resolve_target(lookup: &RsLookupWrapper) -> Option<(LookupTarget, Option<u32>)> {
     match &lookup.query {
         RsLookupQuery::Person(person) => {
@@ -256,34 +340,55 @@ fn resolve_target(lookup: &RsLookupWrapper) -> Option<(LookupTarget, Option<u32>
 fn lookup_posts(
     lookup: &RsLookupWrapper,
 ) -> FnResult<(Vec<CoomerPost>, Option<String>, Option<RsLookupMatchType>)> {
-    let (target, page_offset) = match resolve_target(lookup) {
-        Some(t) => t,
-        None => {
-            return Err(WithReturnCode::new(
-                extism_pdk::Error::msg("Not supported"),
-                404,
-            ))
+    // Try structured ID first
+    if let Some((target, page_offset)) = resolve_target(lookup) {
+        return match target {
+            LookupTarget::DirectPost {
+                service,
+                creator_id,
+                post_id,
+            } => {
+                let posts =
+                    execute_post_request(&service, &creator_id, &post_id).unwrap_or_default();
+                Ok((posts, None, Some(RsLookupMatchType::ExactId)))
+            }
+            LookupTarget::CreatorListing {
+                service,
+                creator_id,
+            } => {
+                let (posts, next_page_key) =
+                    execute_creator_listing_request(&service, &creator_id, page_offset)?;
+                Ok((posts, next_page_key, Some(RsLookupMatchType::ExactId)))
+            }
+        };
+    }
+
+    // Fall back to text search for Media queries
+    let (search_text, page_offset) = match &lookup.query {
+        RsLookupQuery::Media(media) => {
+            let text = media
+                .search
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let offset = media
+                .page_key
+                .as_deref()
+                .and_then(|k| k.parse::<u32>().ok());
+            (text, offset)
         }
+        _ => (None, None),
     };
 
-    match target {
-        LookupTarget::DirectPost {
-            service,
-            creator_id,
-            post_id,
-        } => {
-            let posts =
-                execute_post_request(&service, &creator_id, &post_id).unwrap_or_default();
-            Ok((posts, None, Some(RsLookupMatchType::ExactId)))
+    match search_text {
+        Some(query) => {
+            let (posts, next_page_key) = execute_search_posts_request(query, page_offset)?;
+            Ok((posts, next_page_key, Some(RsLookupMatchType::ExactText)))
         }
-        LookupTarget::CreatorListing {
-            service,
-            creator_id,
-        } => {
-            let (posts, next_page_key) =
-                execute_creator_listing_request(&service, &creator_id, page_offset)?;
-            Ok((posts, next_page_key, Some(RsLookupMatchType::ExactId)))
-        }
+        None => Err(WithReturnCode::new(
+            extism_pdk::Error::msg("Not supported"),
+            404,
+        )),
     }
 }
 
@@ -300,8 +405,51 @@ fn lookup_person(
         }
     };
 
-    let target = match resolve_person_lookup_target(person) {
-        Some(t) => t,
+    // Try structured ID first (coomer: prefix or URL)
+    if let Some(target) = resolve_person_lookup_target(person) {
+        let (service, creator_id) = match target {
+            LookupTarget::CreatorListing {
+                service,
+                creator_id,
+            } => (service, creator_id),
+            LookupTarget::DirectPost {
+                service,
+                creator_id,
+                ..
+            } => (service, creator_id),
+        };
+
+        let url = build_profile_url(&service, &creator_id);
+        let profile = match execute_json_request(url) {
+            Ok(body) => parse_profile_json(&body),
+            Err(_) => None,
+        };
+
+        let results = match profile {
+            Some(prof) => {
+                let mut result =
+                    coomer_profile_to_person_result(&prof, &service, &creator_id);
+                result.match_type = Some(RsLookupMatchType::ExactId);
+                vec![result]
+            }
+            None => vec![],
+        };
+
+        return Ok(Json(RsLookupMetadataResults {
+            results,
+            next_page_key: None,
+        }));
+    }
+
+    // Fall back to plain name search: try profile on each service
+    let name = person
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+
+    let name = match name {
+        Some(n) => n,
         None => {
             return Err(WithReturnCode::new(
                 extism_pdk::Error::msg("Not supported"),
@@ -310,32 +458,16 @@ fn lookup_person(
         }
     };
 
-    let (service, creator_id) = match target {
-        LookupTarget::CreatorListing {
-            service,
-            creator_id,
-        } => (service, creator_id),
-        LookupTarget::DirectPost {
-            service,
-            creator_id,
-            ..
-        } => (service, creator_id),
-    };
-
-    let url = build_profile_url(&service, &creator_id);
-    let profile = match execute_json_request(url) {
-        Ok(body) => parse_profile_json(&body),
-        Err(_) => None,
-    };
-
-    let results = match profile {
-        Some(prof) => {
+    let matches = search_person_by_name(name);
+    let results = matches
+        .into_iter()
+        .map(|(service, prof)| {
+            let creator_id = prof.id.clone().unwrap_or_else(|| name.to_string());
             let mut result = coomer_profile_to_person_result(&prof, &service, &creator_id);
-            result.match_type = Some(RsLookupMatchType::ExactId);
-            vec![result]
-        }
-        None => vec![],
-    };
+            result.match_type = Some(RsLookupMatchType::ExactText);
+            result
+        })
+        .collect();
 
     Ok(Json(RsLookupMetadataResults {
         results,
@@ -390,34 +522,53 @@ pub fn lookup_metadata_images(
 
 #[plugin_fn]
 pub fn lookup(Json(lookup): Json<RsLookupWrapper>) -> FnResult<Json<RsLookupSourceResult>> {
-    let (target, _) = match resolve_target(&lookup) {
-        Some(t) => t,
-        None => return Ok(Json(RsLookupSourceResult::NotApplicable)),
+    if let Some((target, _)) = resolve_target(&lookup) {
+        return match target {
+            LookupTarget::DirectPost {
+                service,
+                creator_id,
+                post_id,
+            } => {
+                let posts =
+                    execute_post_request(&service, &creator_id, &post_id).unwrap_or_default();
+                Ok(Json(posts_to_group_result(
+                    posts,
+                    Some(RsLookupMatchType::ExactId),
+                )))
+            }
+            LookupTarget::CreatorListing {
+                service,
+                creator_id,
+            } => {
+                let (posts, _) =
+                    execute_creator_listing_request(&service, &creator_id, None)?;
+                Ok(Json(posts_to_group_result(
+                    posts,
+                    Some(RsLookupMatchType::ExactId),
+                )))
+            }
+        };
+    }
+
+    // Fall back to text search for Media queries
+    let search_text = match &lookup.query {
+        RsLookupQuery::Media(media) => media
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+        _ => None,
     };
 
-    match target {
-        LookupTarget::DirectPost {
-            service,
-            creator_id,
-            post_id,
-        } => {
-            let posts =
-                execute_post_request(&service, &creator_id, &post_id).unwrap_or_default();
+    match search_text {
+        Some(query) => {
+            let (posts, _) = execute_search_posts_request(query, None)?;
             Ok(Json(posts_to_group_result(
                 posts,
-                Some(RsLookupMatchType::ExactId),
+                Some(RsLookupMatchType::ExactText),
             )))
         }
-        LookupTarget::CreatorListing {
-            service,
-            creator_id,
-        } => {
-            let (posts, _) = execute_creator_listing_request(&service, &creator_id, None)?;
-            Ok(Json(posts_to_group_result(
-                posts,
-                Some(RsLookupMatchType::ExactId),
-            )))
-        }
+        None => Ok(Json(RsLookupSourceResult::NotApplicable)),
     }
 }
 

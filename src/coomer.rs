@@ -27,6 +27,13 @@ pub struct CoomerApiFile {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct CoomerSearchResponse {
+    pub count: Option<u64>,
+    pub true_count: Option<u64>,
+    pub posts: Option<Vec<CoomerApiPost>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct CoomerApiProfile {
     pub id: Option<String>,
     pub name: Option<String>,
@@ -199,6 +206,33 @@ pub fn build_post_web_url(service: &str, creator_id: &str, post_id: &str) -> Str
     format!("{BASE_URL}/{service}/user/{creator_id}/post/{post_id}")
 }
 
+pub fn build_search_posts_url(query: &str, offset: Option<u32>) -> String {
+    let encoded_query = url_encode(query);
+    let mut url = format!("{API_BASE}/posts?q={encoded_query}");
+    if let Some(o) = offset {
+        if o > 0 {
+            url.push_str(&format!("&o={o}"));
+        }
+    }
+    url
+}
+
+fn url_encode(s: &str) -> String {
+    let mut result = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(b as char);
+            }
+            b' ' => result.push_str("%20"),
+            _ => {
+                result.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    result
+}
+
 pub fn build_creator_icon_url(service: &str, creator_id: &str) -> String {
     format!("{BASE_URL}/icons/{service}/{creator_id}")
 }
@@ -248,6 +282,10 @@ pub fn parse_post_json(json_str: &str) -> Option<CoomerApiPost> {
 }
 
 pub fn parse_profile_json(json_str: &str) -> Option<CoomerApiProfile> {
+    serde_json::from_str(json_str).ok()
+}
+
+pub fn parse_search_json(json_str: &str) -> Option<CoomerSearchResponse> {
     serde_json::from_str(json_str).ok()
 }
 
