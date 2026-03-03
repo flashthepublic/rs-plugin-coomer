@@ -2,7 +2,7 @@ name: Release WASM on Version Bump
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
     paths:
       - 'Cargo.toml'
 

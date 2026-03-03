@@ -45,7 +45,7 @@ pub fn infos() -> FnResult<Json<PluginInformation>> {
         capabilities: vec![PluginType::LookupMetadata, PluginType::Lookup],
         version: 1,
         interface_version: 1,
-        repo: Some("https://github.com/flashthepublic/plugin-coomer".to_string()),
+        repo: Some("https://github.com/flashthepublic/rs-plugin-coomer".to_string()),
         publisher: "neckaros".into(),
         description: "Look up content metadata from coomer.st".into(),
         credential_kind: None,
