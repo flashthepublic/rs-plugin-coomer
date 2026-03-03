@@ -31,6 +31,9 @@ pub struct CoomerApiProfile {
     pub id: Option<String>,
     pub name: Option<String>,
     pub service: Option<String>,
+    pub indexed: Option<String>,
+    pub updated: Option<String>,
+    pub public_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +197,14 @@ pub fn build_profile_url(service: &str, creator_id: &str) -> String {
 
 pub fn build_post_web_url(service: &str, creator_id: &str, post_id: &str) -> String {
     format!("{BASE_URL}/{service}/user/{creator_id}/post/{post_id}")
+}
+
+pub fn build_creator_icon_url(service: &str, creator_id: &str) -> String {
+    format!("{BASE_URL}/icons/{service}/{creator_id}")
+}
+
+pub fn build_creator_web_url(service: &str, creator_id: &str) -> String {
+    format!("{BASE_URL}/{service}/user/{creator_id}")
 }
 
 pub fn build_file_url(path: &str) -> String {

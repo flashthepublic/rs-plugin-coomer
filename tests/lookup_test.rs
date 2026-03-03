@@ -1,7 +1,7 @@
 use extism::*;
 use rs_plugin_common_interfaces::lookup::{
-    RsLookupMetadataResult, RsLookupMetadataResults, RsLookupPerson, RsLookupQuery,
-    RsLookupSourceResult, RsLookupWrapper,
+    RsLookupMedia, RsLookupMetadataResult, RsLookupMetadataResults, RsLookupPerson,
+    RsLookupQuery, RsLookupSourceResult, RsLookupWrapper,
 };
 
 fn build_plugin() -> Plugin {
@@ -26,8 +26,81 @@ fn call_lookup(plugin: &mut Plugin, input: &RsLookupWrapper) -> RsLookupMetadata
     serde_json::from_slice(output).expect("Failed to parse lookup output")
 }
 
+// ---- Person lookup tests ----
+
 #[test]
-fn test_lookup_empty_name_returns_404() {
+fn test_lookup_person_returns_person_metadata() {
+    let mut plugin = build_plugin();
+
+    let input = RsLookupWrapper {
+        query: RsLookupQuery::Person(RsLookupPerson {
+            name: Some("coomer:onlyfans/belledelphine".to_string()),
+            ids: None,
+            page_key: None,
+        }),
+        credential: None,
+        params: None,
+    };
+
+    let results = call_lookup(&mut plugin, &input);
+    assert!(
+        !results.results.is_empty(),
+        "Expected at least one result for person lookup"
+    );
+
+    let first = &results.results[0];
+    let person = match &first.metadata {
+        RsLookupMetadataResult::Person(person) => person,
+        other => panic!("Expected Person metadata, got {:?}", other),
+    };
+    assert!(
+        !person.name.trim().is_empty(),
+        "Expected a non-empty name in person result"
+    );
+    assert!(
+        person.id.starts_with("coomer-creator:"),
+        "Expected person id to start with coomer-creator:, got: {}",
+        person.id
+    );
+    assert!(
+        person.portrait.is_some(),
+        "Expected person to have a portrait URL"
+    );
+
+    println!(
+        "Person lookup returned: {} (id: {}, portrait: {:?})",
+        person.name, person.id, person.portrait
+    );
+}
+
+#[test]
+fn test_lookup_person_url_format() {
+    let mut plugin = build_plugin();
+
+    let input = RsLookupWrapper {
+        query: RsLookupQuery::Person(RsLookupPerson {
+            name: Some("https://coomer.st/onlyfans/user/belledelphine".to_string()),
+            ids: None,
+            page_key: None,
+        }),
+        credential: None,
+        params: None,
+    };
+
+    let results = call_lookup(&mut plugin, &input);
+    assert!(
+        !results.results.is_empty(),
+        "Expected at least one result for URL format person lookup"
+    );
+    assert!(
+        matches!(&results.results[0].metadata, RsLookupMetadataResult::Person(_)),
+        "Expected Person metadata for URL format"
+    );
+    println!("Person URL format lookup returned {} results", results.results.len());
+}
+
+#[test]
+fn test_lookup_person_empty_name_returns_404() {
     let mut plugin = build_plugin();
 
     let input = RsLookupWrapper {
@@ -52,13 +125,15 @@ fn test_lookup_empty_name_returns_404() {
     );
 }
 
+// ---- Media lookup tests ----
+
 #[test]
-fn test_lookup_creator_listing_live() {
+fn test_lookup_media_creator_listing_live() {
     let mut plugin = build_plugin();
 
     let input = RsLookupWrapper {
-        query: RsLookupQuery::Person(RsLookupPerson {
-            name: Some("coomer:onlyfans/belledelphine".to_string()),
+        query: RsLookupQuery::Media(RsLookupMedia {
+            search: Some("coomer:onlyfans/belledelphine".to_string()),
             ids: None,
             page_key: None,
         }),
@@ -90,12 +165,12 @@ fn test_lookup_creator_listing_live() {
 }
 
 #[test]
-fn test_lookup_creator_url_format_live() {
+fn test_lookup_media_url_format_live() {
     let mut plugin = build_plugin();
 
     let input = RsLookupWrapper {
-        query: RsLookupQuery::Person(RsLookupPerson {
-            name: Some("https://coomer.st/onlyfans/user/belledelphine".to_string()),
+        query: RsLookupQuery::Media(RsLookupMedia {
+            search: Some("https://coomer.st/onlyfans/user/belledelphine".to_string()),
             ids: None,
             page_key: None,
         }),
@@ -115,12 +190,12 @@ fn test_lookup_creator_url_format_live() {
 }
 
 #[test]
-fn test_lookup_returns_group_download() {
+fn test_lookup_media_returns_group_download() {
     let mut plugin = build_plugin();
 
     let input = RsLookupWrapper {
-        query: RsLookupQuery::Person(RsLookupPerson {
-            name: Some("coomer:onlyfans/belledelphine".to_string()),
+        query: RsLookupQuery::Media(RsLookupMedia {
+            search: Some("coomer:onlyfans/belledelphine".to_string()),
             ids: None,
             page_key: None,
         }),
@@ -148,12 +223,12 @@ fn test_lookup_returns_group_download() {
 }
 
 #[test]
-fn test_lookup_metadata_creator_returns_next_page_key() {
+fn test_lookup_media_creator_returns_next_page_key() {
     let mut plugin = build_plugin();
 
     let input = RsLookupWrapper {
-        query: RsLookupQuery::Person(RsLookupPerson {
-            name: Some("coomer:onlyfans/belledelphine".to_string()),
+        query: RsLookupQuery::Media(RsLookupMedia {
+            search: Some("coomer:onlyfans/belledelphine".to_string()),
             ids: None,
             page_key: None,
         }),
@@ -180,12 +255,12 @@ fn test_lookup_metadata_creator_returns_next_page_key() {
 }
 
 #[test]
-fn test_lookup_metadata_page_2_returns_different_results() {
+fn test_lookup_media_page_2_returns_different_results() {
     let mut plugin = build_plugin();
 
     let page1_input = RsLookupWrapper {
-        query: RsLookupQuery::Person(RsLookupPerson {
-            name: Some("coomer:onlyfans/belledelphine".to_string()),
+        query: RsLookupQuery::Media(RsLookupMedia {
+            search: Some("coomer:onlyfans/belledelphine".to_string()),
             ids: None,
             page_key: None,
         }),
@@ -197,8 +272,8 @@ fn test_lookup_metadata_page_2_returns_different_results() {
     assert!(!page1.results.is_empty(), "Expected page 1 results");
 
     let page2_input = RsLookupWrapper {
-        query: RsLookupQuery::Person(RsLookupPerson {
-            name: Some("coomer:onlyfans/belledelphine".to_string()),
+        query: RsLookupQuery::Media(RsLookupMedia {
+            search: Some("coomer:onlyfans/belledelphine".to_string()),
             ids: None,
             page_key: Some("50".to_string()),
         }),

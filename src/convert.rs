@@ -11,7 +11,55 @@ use rs_plugin_common_interfaces::{
 };
 use serde_json::json;
 
-use crate::coomer::CoomerPost;
+use crate::coomer::{
+    build_creator_icon_url, build_creator_web_url, CoomerApiProfile, CoomerPost,
+};
+
+pub fn coomer_profile_to_person_result(
+    profile: &CoomerApiProfile,
+    service: &str,
+    creator_id: &str,
+) -> RsLookupMetadataResultWrapper {
+    let name = profile
+        .name
+        .clone()
+        .unwrap_or_else(|| creator_id.to_string());
+
+    let icon_url = build_creator_icon_url(service, creator_id);
+    let web_url = build_creator_web_url(service, creator_id);
+
+    let person = Person {
+        id: format!("coomer-creator:{service}/{creator_id}"),
+        name,
+        portrait: Some(icon_url.clone()),
+        params: Some(json!({
+            "service": service,
+            "creatorId": creator_id,
+            "publicId": profile.public_id,
+            "coomerUrl": web_url,
+        })),
+        generated: true,
+        ..Default::default()
+    };
+
+    let images = vec![ExternalImage {
+        kind: Some(ImageType::Poster),
+        url: RsRequest {
+            url: icon_url,
+            ..Default::default()
+        },
+        ..Default::default()
+    }];
+
+    RsLookupMetadataResultWrapper {
+        metadata: RsLookupMetadataResult::Person(person),
+        relations: Some(Relations {
+            ext_images: Some(images),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
 
 pub fn coomer_post_to_result(post: CoomerPost) -> RsLookupMetadataResultWrapper {
     let images = coomer_post_to_images(&post);
