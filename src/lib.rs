@@ -44,7 +44,7 @@ pub fn infos() -> FnResult<Json<PluginInformation>> {
     Ok(Json(PluginInformation {
         name: "coomer_metadata".into(),
         capabilities: vec![PluginType::LookupMetadata, PluginType::Lookup],
-        version: 5,
+        version: 6,
         interface_version: 1,
         repo: Some("https://github.com/flashthepublic/rs-plugin-coomer".to_string()),
         publisher: "neckaros".into(),
@@ -120,20 +120,15 @@ fn resolve_person_lookup_target(person: &RsLookupPerson) -> Option<LookupTarget>
 
     // Check ids fields
     if let Some(ids) = person.ids.as_ref() {
-        if let Some(id) = ids.redseat.as_deref().and_then(parse_coomer_id) {
+        if let Some(id) = ids.redseat().and_then(parse_coomer_id) {
             return Some(coomer_id_to_target(id));
         }
 
-        if let Some(id) = ids.slug.as_deref().and_then(parse_coomer_id) {
+        if let Some(id) = ids.slug().and_then(parse_coomer_id) {
             return Some(coomer_id_to_target(id));
         }
 
-        if let Some(id) = ids.other_ids.as_ref().and_then(|other_ids| {
-            other_ids
-                .as_slice()
-                .iter()
-                .find_map(|value| parse_coomer_id(value))
-        }) {
+        if let Some(id) = ids.as_all_ids().iter().find_map(|value| parse_coomer_id(value)) {
             return Some(coomer_id_to_target(id));
         }
     }
@@ -147,18 +142,13 @@ fn resolve_media_lookup_target(media: &RsLookupMedia) -> Option<LookupTarget> {
     }
 
     if let Some(ids) = media.ids.as_ref() {
-        if let Some(id) = ids.redseat.as_deref().and_then(parse_coomer_id) {
+        if let Some(id) = ids.redseat().and_then(parse_coomer_id) {
             return Some(coomer_id_to_target(id));
         }
-        if let Some(id) = ids.slug.as_deref().and_then(parse_coomer_id) {
+        if let Some(id) = ids.slug().and_then(parse_coomer_id) {
             return Some(coomer_id_to_target(id));
         }
-        if let Some(id) = ids.other_ids.as_ref().and_then(|other_ids| {
-            other_ids
-                .as_slice()
-                .iter()
-                .find_map(|value| parse_coomer_id(value))
-        }) {
+        if let Some(id) = ids.as_all_ids().iter().find_map(|value| parse_coomer_id(value)) {
             return Some(coomer_id_to_target(id));
         }
     }
@@ -791,10 +781,7 @@ mod tests {
     fn resolve_target_from_other_ids() {
         let person = RsLookupPerson {
             name: Some("some name".to_string()),
-            ids: Some(RsIds {
-                other_ids: Some(vec!["coomer:fansly/creator1".to_string()].into()),
-                ..Default::default()
-            }),
+            ids: Some(RsIds::try_from(vec!["coomer:fansly/creator1".to_string()]).unwrap()),
             page_key: None,
         };
 
@@ -812,9 +799,10 @@ mod tests {
     fn resolve_target_from_slug() {
         let person = RsLookupPerson {
             name: None,
-            ids: Some(RsIds {
-                slug: Some("coomer:onlyfans/user1".to_string()),
-                ..Default::default()
+            ids: Some({
+                let mut ids = RsIds::default();
+                ids.set("slug", "coomer:onlyfans/user1");
+                ids
             }),
             page_key: None,
         };
@@ -833,10 +821,7 @@ mod tests {
     fn resolve_target_from_redseat_stored_creator_id() {
         let person = RsLookupPerson {
             name: Some("Belle Delphine".to_string()),
-            ids: Some(RsIds {
-                redseat: Some("coomer-creator:onlyfans|belledelphine".to_string()),
-                ..Default::default()
-            }),
+            ids: Some(RsIds::from_redseat("coomer-creator:onlyfans|belledelphine".to_string())),
             page_key: None,
         };
 
@@ -854,10 +839,7 @@ mod tests {
     fn resolve_media_target_from_redseat_stored_media_id() {
         let media = RsLookupMedia {
             search: Some("Belle Delphine post".to_string()),
-            ids: Some(RsIds {
-                redseat: Some("coomer:onlyfans|belledelphine|12345".to_string()),
-                ..Default::default()
-            }),
+            ids: Some(RsIds::from_redseat("coomer:onlyfans|belledelphine|12345".to_string())),
             page_key: None,
         };
 
